@@ -1,8 +1,15 @@
 ;window.udon = {
     Model: (new Model()),
     Event: (new Event()),
-    Flow: (new Flow())
+    Flow: (new Flow()),
+    Route: (new Route())
 };
+
+function Route() {
+    this.settings = {
+
+    };
+}
 
 function Flow() {
     this.settings = {
@@ -11,13 +18,20 @@ function Flow() {
         current: {
             index: 0,
             innerIndex: 0,
-            success: false
+            success: false,
+            data: {}
         },
         halt: false,
-        end: false
+        haltType: 'STOP', // or 'MOVE_ON'
+        end: false,
+        deepStep: 0,
+        alerts: {}
     };
 
     var self = this;
+
+    this.EXIT = false;
+    this.CLEAR = true;
 
     this.extend = function(value) {
         if (typeof(value) !== 'undefined') {
@@ -47,31 +61,84 @@ function Flow() {
         return self;
     };
 
+    this.data = function(value) {
+        self.settings.current.data = value;
+    };
+
+    this.currentStep = function(index) {
+        return self.settings.current.index;
+    };
+
+    this.deepStep = function() {
+        return self.settings.deepStep;
+    };
+
     // method to run function(s) of current step
     this.transition = function(stepIndex) {
         var innerSuccess = true,
-            tasks        = self.settings.steps[stepIndex];
+            allTasks     = self.settings.steps,
+            tasks;
 
-        for(var i = 0; i < tasks.length; i++){
-            // can resume if 
-            if (i < self.settings.current.innerIndex)
-                continue;
+        for(var i = stepIndex; i < allTasks.length; i++) {
+            self.settings.current.index = i;
+            tasks = self.settings.steps[i];
 
-            innerSuccess = self[tasks[i]]();
+            for(var j = self.settings.current.innerIndex; j < tasks.length; j++){
 
-            if ( ! innerSuccess) {
-                self.alert(tasks[i]);
-                break;
+                innerSuccess = self[tasks[j]]();
+
+                if ( ! innerSuccess) {
+                    self.settings.halt = true;
+                    self.alert(tasks[j]);
+                    break;
+                }
+
+                self.settings.halt = false;
+
+                if (self.hasNextInner())
+                    self.settings.current.innerIndex++;
             }
 
-            if (self.hasNextInner())
-                self.settings.current.innerIndex++;
+            if (i > self.settings.deepStep)
+                self.settings.deepStep = i;
+
+            // stop to move on to next step if halt (error in previous step)
+            if (self.settings.halt)
+                break;
+
+            // reset sub steps' index
+            self.settings.current.innerIndex = 0;
         }
     };
 
-    this.next = function() {
+    this.next = function(callback) {
+
+        if (self.settings.deepStep > self.settings.current.index) {
+            self.settings.current.index += 1;
+
+            if (typeof(callback) !== 'undefined')
+                callback();
+
+            return;
+        }
+
         if (self.settings.current.index === 0) {
             self.transition(self.settings.current.index);
+        } else if (self.settings.halt && self.settings.haltType === 'MOVE_ON') {
+            // resume the previous
+            var tasks = self.settings.steps[self.settings.current.index];
+
+            if (tasks.length > ( self.settings.current.innerIndex + 1)) {
+                self.settings.current.innerIndex += 1;
+            } else {
+                self.settings.current.index += 1;
+                self.settings.current.innerIndex = 0;
+            }
+
+            self.settings.haltType = 'STOP';
+
+            self.transition(self.settings.current.index);
+
         } else if (self.settings.current.success && self.hasNext()) {
             self.settings.current.index += 1;
             self.transition(self.settings.current.index);
@@ -79,6 +146,15 @@ function Flow() {
             self.settings.end = true;
         }
     }
+
+    this.prev = function(callback) {
+        if (self.settings.current.index > 0) {
+            self.settings.current.index -= 1;
+        }
+
+        if (typeof(callback) !== 'undefined')
+            callback();
+    };
 
     this.hasNext = function() {
         if (self.settings.currentIndex == (self.settings.steps.length - 1)) {
@@ -97,8 +173,30 @@ function Flow() {
         return true;
     };
 
+    this.isHalt = function() {
+        return self.settings.halt;
+    };
+
+    this.halt = function() {
+        self.settings.halt = true;
+        self.settings.haltType = 'MOVE_ON';
+    };
+
     this.alert = function(callbackName) {
-        self.settings.alerts[callbackName]();
+        // manual halt should not trigger error handling
+        if (self.settings.halt && self.settings.haltType === 'MOVE_ON')
+            return;
+
+        if (self.settings.alerts.hasOwnProperty(callbackName))
+            self.settings.alerts[callbackName](self.settings.current.data);
+        else if (self.settings.alerts.hasOwnProperty('default'))
+            self.settings.alerts['default'](self.settings.current.data);
+        else
+            console.log('Error found');
+    };
+
+    this.all = function() {
+        console.log(self.settings);
     };
 }
 
@@ -345,47 +443,51 @@ function Model() {
     };
 }
 
-var m2fail = {};
-m2fail.abc = function() {
-                    console.log("m2 encounter an error! or failure");
-                    $('body').css('background', '#000');
-                };
-// example usage
- $(document).ready(function(){
-      
-        var f2 = udon.Flow.extend({
-            steps: [
-                {
-                    m2: function() {
-                        console.log('m2');
-                        return false;
-                    },
-                    m3: function() {
-                        console.log('m3');
-                        return true;
-                    }
-                },
-                'asda'
-            ],
-            alerts: {
-                m2: m2fail.abc
-            }
-        });
-        
-        f2.next();
-        //f2.m3();
+// var m2fail = {};
+// m2fail.abc = function() {
+//                     console.log("m2 encounter an error! or failure");
+//                     $('body').css('background', '#000');
+//                 };
 
-//     var a = udon.Model.extend({a: 1});
-//     var e = new udon.Event.extend({
-//         model: a,
-//         events: {
-//             'click:body': function() {
-//                 console.log("you clicked body");
-//             },
-//             'click:.phonesupport': function(){
-//                 e.remove('click:body');
-//                 console.log(e.model.name());
+// function asda() {}
+// // example usage
+//  $(document).ready(function(){
+      
+//         var f2 = FLS.Flow.extend({
+//             steps: [
+//                 {
+//                     m2: function() {
+//                         console.log('m2');
+//                         return false;
+//                     },
+//                     m3: function() {
+//                         console.log('m3');
+//                         return true;
+//                     }
+//                 },
+//                 'asda'
+//             ],
+//             alerts: {
+//                 m2: m2fail.abc
 //             }
-//         },
-//     });
- });
+//         });
+        
+//         f2.next();
+//         f2.all();
+
+//         //f2.m3();
+
+// //     var a = FLS.Model.extend({a: 1});
+// //     var e = new FLS.Event.extend({
+// //         model: a,
+// //         events: {
+// //             'click:body': function() {
+// //                 console.log("you clicked body");
+// //             },
+// //             'click:.phonesupport': function(){
+// //                 e.remove('click:body');
+// //                 console.log(e.model.name());
+// //             }
+// //         },
+// //     });
+//  });
