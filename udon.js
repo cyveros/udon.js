@@ -55,7 +55,6 @@ function Flow() {
             }
         });
 
-
         self.settings.steps = tmpSteps;
 
         return self;
@@ -69,12 +68,31 @@ function Flow() {
         return self.settings.current.index;
     };
 
+    this.setCurrentStep = function(value) {
+        self.settings.current.index = value;
+    };
+
+    this.currentInnerStep = function(){
+        return self.settings.current.innerIndex;
+    };
+
+    this.setCurrentInnerStep = function(value) {
+        self.settings.current.innerIndex = value;
+    };
+
     this.deepStep = function() {
         return self.settings.deepStep;
     };
 
+    // set if necessary the deepest step ever reached
+    this.setDeepStep = function(value) {
+        if (value > self.settings.deepStep)
+            self.settings.deepStep = value;
+    };
+
     // method to run function(s) of current step
     this.transition = function(stepIndex) {
+
         var innerSuccess = true,
             allTasks     = self.settings.steps,
             tasks;
@@ -109,6 +127,7 @@ function Flow() {
             // reset sub steps' index
             self.settings.current.innerIndex = 0;
         }
+        
     };
 
     this.next = function(callback) {
