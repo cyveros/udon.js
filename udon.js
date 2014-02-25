@@ -2,16 +2,12 @@
     Model: (new Model()),
     Event: (new Event()),
     Flow: (new Flow()),
-    Route: (new Route())
+    Data: (new ContentProvider())
 };
 
-function Route() {
-    this.settings = {
-
-    };
-}
-
 function Flow() {
+    var self = this;
+
     this.settings = {
         type: "Default Flow",
         steps: [],
@@ -21,17 +17,93 @@ function Flow() {
             success: false,
             data: {}
         },
+        pre: function(){
+            if ( ! self.settings.debug)
+                return;
+
+            console.log('Run: ' + self.currentTaskName());
+
+        },
+        post: function(){
+            if ( ! self.settings.debug)
+                return;
+
+            console.log('End: ' + self.currentTaskName());
+        },
         halt: false,
         haltType: 'STOP', // or 'MOVE_ON'
         end: false,
         deepStep: 0,
-        alerts: {}
+        alerts: {},
+        debug: false,
+        persistData: (new ContentProvider())
     };
 
-    var self = this;
+    this.currentTask = '';
+    this.nextTask = '';
 
-    this.EXIT = false;
-    this.CLEAR = true;
+    this.reset = function() {
+        self.setCurrentStep(0);
+        self.setCurrentInnerStep(0);
+
+        self.settings.deepStep = 0;
+        //self.settings.persistData = {};
+        self.settings.deepStep = 0;
+        self.settings.halt = false;
+        self.settings.haltType = 'STOP';
+        
+        return self;
+    };
+
+    this.runPreTask = function() {
+        if (self.settings.pre !== undefined || self.settings.pre !== null) {
+            self.settings.pre();
+        }
+    };
+
+    this.runPostTask = function() {
+        if (self.settings.post !== undefined || self.settings.post !== null) {
+            self.settings.post();
+        }
+    };
+
+    this.forward = function() {
+        self.settings.halt = false;
+        self.currentTask = self.nextTaskName();
+
+        self.executeCurrentTask();
+
+        self.setDeepStep(self.currentStep());
+    };
+
+    this.executeCurrentTask = function() {
+        if (self.currentTask) {
+            self.runPreTask();
+            self[self.currentTask]();
+            self.runPostTask();
+        }
+    };
+
+    this.pause = function() {
+        self.halt();
+
+        // change current to be the next one
+        // when resuming, continues
+        self.currentTask = self.currentTaskName();
+    };
+
+    this.stop = function(data) {
+        if (typeof(data) !== 'undefined') {
+            self.data(data);
+        }
+
+        self.settings.halt = true;
+        self.settings.haltType = 'STOP';
+        self.alert(self.currentTask);
+
+        if (self.currentStep() == 0)
+            self.reset();
+    };
 
     this.extend = function(value) {
         if (typeof(value) !== 'undefined') {
@@ -64,8 +136,28 @@ function Flow() {
         self.settings.current.data = value;
     };
 
-    this.currentStep = function(index) {
+    this.persist = function(value) {
+        self.settings.persistData.push(value);
+    };
+
+    this.getData = function(key){
+        return self.settings.persistData.find(key);
+    };
+
+    this.currentStep = function() {
         return self.settings.current.index;
+    };
+
+    this.incrementCurrentStep = function() {
+        self.settings.current.index += 1;
+    };
+
+    this.stepLength = function() {
+        return self.settings.steps.length;
+    };
+
+    this.currentInnerStepLength = function() {
+        return self.settings.steps[self.currentStep()].length;
     };
 
     this.setCurrentStep = function(value) {
@@ -80,6 +172,11 @@ function Flow() {
         self.settings.current.innerIndex = value;
     };
 
+    this.incrementCurrentInnerStep = function() {
+        self.settings.current.innerIndex += 1;
+    };
+
+
     this.deepStep = function() {
         return self.settings.deepStep;
     };
@@ -90,85 +187,79 @@ function Flow() {
             self.settings.deepStep = value;
     };
 
-    // method to run function(s) of current step
-    this.transition = function(stepIndex) {
+    // check if the given step were executed
+    this.hasStepExecuted = function(stepId){
+        return (stepId < self.deepStep());
+    };
 
-        var innerSuccess = true,
-            allTasks     = self.settings.steps,
-            tasks;
+    this.currentTaskName = function() {
+        return self.settings.steps[self.currentStep()][self.currentInnerStep()];
+    };
 
-        for(var i = stepIndex; i < allTasks.length; i++) {
-            self.settings.current.index = i;
-            tasks = self.settings.steps[i];
-
-            for(var j = self.settings.current.innerIndex; j < tasks.length; j++){
-
-                innerSuccess = self[tasks[j]]();
-
-                if ( ! innerSuccess) {
-                    self.settings.halt = true;
-                    self.alert(tasks[j]);
-                    break;
-                }
-
-                self.settings.halt = false;
-
-                if (self.hasNextInner())
-                    self.settings.current.innerIndex++;
-            }
-
-            if (i > self.settings.deepStep)
-                self.settings.deepStep = i;
-
-            // stop to move on to next step if halt (error in previous step)
-            if (self.settings.halt)
-                break;
-
-            // reset sub steps' index
-            self.settings.current.innerIndex = 0;
+    this.nextTaskName = function(){
+        if (self.stepLength() < ( 1 + self.currentStep())) {
+            return false;
         }
-        
+
+        if (self.currentInnerStepLength() <= (1 + self.currentInnerStep())) {
+            self.incrementCurrentStep();
+            self.setCurrentInnerStep(0);
+        } else {
+            self.incrementCurrentInnerStep();
+        }
+
+        return self.settings.steps[self.currentStep()][self.currentInnerStep()];
+    };
+
+    // method to run function(s) of current step
+    this.transition = function() {
+        self.currentTask = self.currentTaskName();
+        self.executeCurrentTask();
     };
 
     this.next = function(callback) {
 
-        if (self.settings.deepStep > self.settings.current.index) {
-            self.settings.current.index += 1;
+        // if (self.settings.deepStep > self.settings.current.index) {
+        //     self.settings.current.index += 1;
 
-            if (typeof(callback) !== 'undefined')
-                callback();
+        //     if (typeof(callback) !== 'undefined')
+        //         callback();
 
-            return;
-        }
+        //     return;
+        // }
 
-        if (self.settings.current.index === 0) {
-            self.transition(self.settings.current.index);
-        } else if (self.settings.halt && self.settings.haltType === 'MOVE_ON') {
-            // resume the previous
-            var tasks = self.settings.steps[self.settings.current.index];
+        if (typeof(callback) !== 'undefined')
+            callback();
 
-            if (tasks.length > ( self.settings.current.innerIndex + 1)) {
-                self.settings.current.innerIndex += 1;
-            } else {
-                self.settings.current.index += 1;
-                self.settings.current.innerIndex = 0;
-            }
+        if (self.isPaused()) {
 
             self.settings.haltType = 'STOP';
+            self.settings.halt = false;
 
-            self.transition(self.settings.current.index);
+            self.forward();
 
-        } else if (self.settings.current.success && self.hasNext()) {
-            self.settings.current.index += 1;
-            self.transition(self.settings.current.index);
+        } else if (self.isStopped()) {
+
+            self.settings.halt = false;
+            self.transition();
+
+        } else if (self.isFreshStart()) {
+            self.transition();
         } else {
-            self.settings.end = true;
+            self.forward();
         }
     }
 
     this.prev = function(callback) {
-        if (self.settings.current.index > 0) {
-            self.settings.current.index -= 1;
+        // the current step is always the next step's index
+        // due to successful execution of last step, we increment step index to the next
+        // thus, previous is 2 step earlier
+        if (self.currentStep() > 0) {
+            self.setCurrentStep(self.currentStep() - 1);
+            self.setCurrentInnerStep(0);
+
+            self.settings.haltType = 'STOP';
+            self.settings.halt = false;
         }
 
         if (typeof(callback) !== 'undefined')
@@ -192,6 +283,18 @@ function Flow() {
         return true;
     };
 
+    this.isPaused = function() {
+        return (self.settings.halt && self.settings.haltType === 'MOVE_ON');
+    };
+
+    this.isStopped = function() {
+        return (self.settings.halt && self.settings.haltType === 'STOP');
+    };
+
+    this.isFreshStart = function() {
+        return (self.currentStep() == 0 && self.currentInnerStep() == 0);
+    };
+
     this.isHalt = function() {
         return self.settings.halt;
     };
@@ -208,14 +311,35 @@ function Flow() {
 
         if (self.settings.alerts.hasOwnProperty(callbackName))
             self.settings.alerts[callbackName](self.settings.current.data);
-        else if (self.settings.alerts.hasOwnProperty('default'))
-            self.settings.alerts['default'](self.settings.current.data);
-        else
-            console.log('Error found');
+
+        if (self.settings.alerts.hasOwnProperty('defaultError'))
+            self.settings.alerts['defaultError'](self.settings.current.data);
+
+        console.log('Error found: %c' + self.currentTaskName(), 'color: #FF0000');
     };
 
     this.all = function() {
         console.log(self.settings);
+        return self.settings;
+    };
+}
+
+function ContentProvider() {
+    var self = this;
+
+    this.settings = {
+        data: {}
+    };
+
+    this.push = function(value) {
+        self.settings.data = $.extend(self.settings.data, value);
+    };
+
+    this.find = function(key) {
+        if (self.settings.data.hasOwnProperty(key))
+            return self.settings.data[key];
+
+        return false;
     };
 }
 
@@ -461,52 +585,3 @@ function Model() {
         }
     };
 }
-
-// var m2fail = {};
-// m2fail.abc = function() {
-//                     console.log("m2 encounter an error! or failure");
-//                     $('body').css('background', '#000');
-//                 };
-
-// function asda() {}
-// // example usage
-//  $(document).ready(function(){
-      
-//         var f2 = FLS.Flow.extend({
-//             steps: [
-//                 {
-//                     m2: function() {
-//                         console.log('m2');
-//                         return false;
-//                     },
-//                     m3: function() {
-//                         console.log('m3');
-//                         return true;
-//                     }
-//                 },
-//                 'asda'
-//             ],
-//             alerts: {
-//                 m2: m2fail.abc
-//             }
-//         });
-        
-//         f2.next();
-//         f2.all();
-
-//         //f2.m3();
-
-// //     var a = FLS.Model.extend({a: 1});
-// //     var e = new FLS.Event.extend({
-// //         model: a,
-// //         events: {
-// //             'click:body': function() {
-// //                 console.log("you clicked body");
-// //             },
-// //             'click:.phonesupport': function(){
-// //                 e.remove('click:body');
-// //                 console.log(e.model.name());
-// //             }
-// //         },
-// //     });
-//  });
